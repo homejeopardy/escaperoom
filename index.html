@@ -1,181 +1,54 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Escape Room Control + Display</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
-  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
-  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-</head>
-<body class="bg-black text-white">
-  <div id="root"></div>
+function Control({ send, state }) {
+  const [recording, setRecording] = React.useState(false);
+  const [recorder, setRecorder] = React.useState(null);
+  const [chunks, setChunks] = React.useState([]);
 
-  <script type="text/babel">
-    const { useState, useEffect } = React;
-    const channel = new BroadcastChannel("escape-room");
+  function startRecording() {
+    navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
+      const mediaRecorder = new MediaRecorder(stream);
+      setRecorder(mediaRecorder);
+      setChunks([]);
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) setChunks((prev) => [...prev, e.data]);
+      };
+      mediaRecorder.onstop = () => {
+        const blob = new Blob(chunks, { type: "audio/webm" });
+        const url = URL.createObjectURL(blob);
+        send({ type: "clue", value: url });
+      };
+      mediaRecorder.start();
+      setRecording(true);
+    });
+  }
 
-    function useHashRoute() {
-      const [hash, setHash] = useState(window.location.hash || "#/control");
-      useEffect(() => {
-        const onHash = () => setHash(window.location.hash || "#/control");
-        window.addEventListener("hashchange", onHash);
-        return () => window.removeEventListener("hashchange", onHash);
-      }, []);
-      return hash.replace(/^#\/?/, "/");
+  function stopRecording() {
+    if (recorder) {
+      recorder.stop();
+      setRecording(false);
     }
+  }
 
-    function usePersistentState(key, initial) {
-      const [val, setVal] = useState(() => {
-        try { return JSON.parse(localStorage.getItem(key)) ?? initial; }
-        catch { return initial; }
-      });
-      useEffect(() => localStorage.setItem(key, JSON.stringify(val)), [key, val]);
-      return [val, setVal];
-    }
-
-    function Control() {
-      const [duration, setDuration] = usePersistentState("duration", 60);
-      const [remaining, setRemaining] = useState(duration * 60);
-      const [running, setRunning] = useState(false);
-      const [subtitle, setSubtitle] = usePersistentState("subtitle", "");
-      const [recording, setRecording] = useState(false);
-      const [recorder, setRecorder] = useState(null);
-
-      // Timer logic
-      useEffect(() => {
-        let timer;
-        if (running && remaining > 0) {
-          timer = setInterval(() => setRemaining(r => r - 1), 1000);
-        }
-        return () => clearInterval(timer);
-      }, [running, remaining]);
-
-      useEffect(() => {
-        channel.postMessage({ type: "update", remaining, running, subtitle });
-      }, [remaining, running, subtitle]);
-
-      const start = () => { setRemaining(duration * 60); setRunning(true); };
-      const pause = () => setRunning(false);
-      const resume = () => setRunning(true);
-      const reset = () => { setRemaining(duration * 60); setRunning(false); };
-
-      // --- Recording Clues ---
-      async function toggleRecord() {
-        if (recording) {
-          recorder.stop();
-          setRecording(false);
-        } else {
-          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-          const newRecorder = new MediaRecorder(stream);
-          const chunks = [];
-          newRecorder.ondataavailable = e => chunks.push(e.data);
-          newRecorder.onstop = () => {
-            const blob = new Blob(chunks, { type: "audio/webm" });
-            blob.arrayBuffer().then(buf => {
-              channel.postMessage({ type: "clue-audio", audio: Array.from(new Uint8Array(buf)) });
-            });
-          };
-          newRecorder.start();
-          setRecorder(newRecorder);
-          setRecording(true);
-        }
-      }
-
-      function blackout() { channel.postMessage({ type: "blackout" }); }
-      function openDisplay() {
-        const w = window.open("#/display", "_blank"); if (w) w.focus();
-      }
-
-      return (
-        <div className="p-6 space-y-4">
-          <h1 className="text-2xl font-bold">Escape Room Control</h1>
-          <div>
-            <label>Duration (minutes): </label>
-            <input type="number" value={duration}
-              onChange={e => setDuration(parseInt(e.target.value))}
-              className="text-black p-1 rounded" />
-          </div>
-          <div className="space-x-2">
-            <button onClick={start} className="bg-green-600 px-3 py-1 rounded">Start</button>
-            <button onClick={pause} className="bg-yellow-600 px-3 py-1 rounded">Pause</button>
-            <button onClick={resume} className="bg-blue-600 px-3 py-1 rounded">Resume</button>
-            <button onClick={reset} className="bg-red-600 px-3 py-1 rounded">Reset</button>
-          </div>
-          <div>
-            <label>Subtitle: </label>
-            <input type="text" value={subtitle}
-              onChange={e => setSubtitle(e.target.value)}
-              className="text-black p-1 rounded" />
-          </div>
-          <div className="space-x-2">
-            <button onClick={toggleRecord}
-              className={`${recording ? "bg-red-700" : "bg-purple-600"} px-3 py-1 rounded`}>
-              {recording ? "Stop Recording Clue" : "Record Clue"}
-            </button>
-          </div>
-          <button onClick={blackout} className="bg-gray-800 px-3 py-1 rounded">Blackout</button>
-          <div>
-            <button onClick={openDisplay} className="bg-indigo-600 px-3 py-1 rounded">Open Display Window</button>
-          </div>
-        </div>
-      );
-    }
-
-    function Display() {
-      const [remaining, setRemaining] = useState(0);
-      const [running, setRunning] = useState(false);
-      const [subtitle, setSubtitle] = useState("");
-      const [message, setMessage] = useState("");
-      const [blackout, setBlackout] = useState(false);
-
-      useEffect(() => {
-        channel.onmessage = (e) => {
-          const { type, ...data } = e.data;
-          if (type === "update") {
-            setRemaining(data.remaining); setRunning(data.running); setSubtitle(data.subtitle);
-          } else if (type === "message") {
-            setMessage(data.text); setTimeout(() => setMessage(""), 10000);
-          } else if (type === "blackout") {
-            setBlackout(b => !b);
-          } else if (type === "clue-audio") {
-            const audio = new Uint8Array(data.audio);
-            const blob = new Blob([audio], { type: "audio/webm" });
-            const url = URL.createObjectURL(blob);
-            const audioEl = new Audio(url);
-            audioEl.play();
-          }
-        };
-      }, []);
-
-      useEffect(() => {
-        if (!document.fullscreenElement) {
-          document.documentElement.requestFullscreen().catch(()=>{});
-        }
-      }, []);
-
-      const mins = Math.floor(remaining / 60);
-      const secs = remaining % 60;
-      const timeStr = `${mins}:${secs.toString().padStart(2, "0")}`;
-
-      return (
-        <div className={`w-screen h-screen flex flex-col items-center justify-center ${blackout ? "bg-black" : "bg-gray-900"} text-white`}>
-          <div className="text-8xl font-bold">{timeStr}</div>
-          {subtitle && <div className="text-2xl mt-2">{subtitle}</div>}
-          {message && <div className="text-3xl mt-6 bg-yellow-600 text-black px-4 py-2 rounded">{message}</div>}
-        </div>
-      );
-    }
-
-    function App() {
-      const route = useHashRoute();
-      if (route === "/display") return <Display />;
-      return <Control />;
-    }
-
-    const root = ReactDOM.createRoot(document.getElementById("root"));
-    root.render(<App />);
-  </script>
-</body>
-</html>
+  return (
+    <div className="space-y-4">
+      <h2 className="text-xl font-bold">Controls</h2>
+      <div className="flex gap-2">
+        {!recording ? (
+          <button
+            onClick={startRecording}
+            className="px-4 py-2 bg-green-600 rounded"
+          >
+            🎙️ Record Clue
+          </button>
+        ) : (
+          <button
+            onClick={stopRecording}
+            className="px-4 py-2 bg-red-600 rounded"
+          >
+            ⏹ Stop Recording
+          </button>
+        )}
+      </div>
+      {/* other controls here */}
+    </div>
+  );
+}
