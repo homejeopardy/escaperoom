@@ -1,54 +1,174 @@
-function Control({ send, state }) {
-  const [recording, setRecording] = React.useState(false);
-  const [recorder, setRecorder] = React.useState(null);
-  const [chunks, setChunks] = React.useState([]);
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Escape Room Control + Display</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script src="https://unpkg.com/react@17/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@17/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet" />
+    <style>
+      body, html {
+        margin: 0;
+        height: 100%;
+        width: 100%;
+        background: black;
+      }
+      #root {
+        height: 100%;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="text/babel">
 
-  function startRecording() {
-    navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
-      const mediaRecorder = new MediaRecorder(stream);
-      setRecorder(mediaRecorder);
-      setChunks([]);
-      mediaRecorder.ondataavailable = (e) => {
-        if (e.data.size > 0) setChunks((prev) => [...prev, e.data]);
-      };
-      mediaRecorder.onstop = () => {
-        const blob = new Blob(chunks, { type: "audio/webm" });
-        const url = URL.createObjectURL(blob);
-        send({ type: "clue", value: url });
-      };
-      mediaRecorder.start();
-      setRecording(true);
-    });
-  }
+      function useHashRoute() {
+        const [hash, setHash] = React.useState(window.location.hash);
+        React.useEffect(() => {
+          const onHash = () => setHash(window.location.hash);
+          window.addEventListener("hashchange", onHash);
+          return () => window.removeEventListener("hashchange", onHash);
+        }, []);
+        return hash.replace(/^#\/?/, "/");
+      }
 
-  function stopRecording() {
-    if (recorder) {
-      recorder.stop();
-      setRecording(false);
-    }
-  }
+      function usePersistentState(key, initial) {
+        const [value, setValue] = React.useState(() => {
+          const saved = localStorage.getItem(key);
+          return saved ? JSON.parse(saved) : initial;
+        });
+        React.useEffect(() => {
+          localStorage.setItem(key, JSON.stringify(value));
+        }, [key, value]);
+        return [value, setValue];
+      }
 
-  return (
-    <div className="space-y-4">
-      <h2 className="text-xl font-bold">Controls</h2>
-      <div className="flex gap-2">
-        {!recording ? (
-          <button
-            onClick={startRecording}
-            className="px-4 py-2 bg-green-600 rounded"
-          >
-            🎙️ Record Clue
-          </button>
-        ) : (
-          <button
-            onClick={stopRecording}
-            className="px-4 py-2 bg-red-600 rounded"
-          >
-            ⏹ Stop Recording
-          </button>
-        )}
-      </div>
-      {/* other controls here */}
-    </div>
-  );
-}
+      function App() {
+        const route = useHashRoute();
+        const [state, setState] = usePersistentState("escapeRoomState", {
+          time: 60 * 60, // 1 hr default
+          running: false,
+          lastMessage: null,
+        });
+
+        // Timer effect
+        React.useEffect(() => {
+          if (!state.running) return;
+          const id = setInterval(() => {
+            setState((s) => ({
+              ...s,
+              time: s.time > 0 ? s.time - 1 : 0,
+              running: s.time > 0,
+            }));
+          }, 1000);
+          return () => clearInterval(id);
+        }, [state.running]);
+
+        function send(msg) {
+          setState((s) => ({ ...s, lastMessage: msg }));
+        }
+
+        return (
+          <>
+            {route === "/control" ? (
+              <Control state={state} setState={setState} send={send} />
+            ) : (
+              <Display state={state} />
+            )}
+          </>
+        );
+      }
+
+      function formatTime(sec) {
+        const m = Math.floor(sec / 60);
+        const s = sec % 60;
+        return `${m}:${s.toString().padStart(2,"0")}`;
+      }
+
+      function Control({ state, setState, send }) {
+        const [recording, setRecording] = React.useState(false);
+        const [recorder, setRecorder] = React.useState(null);
+        const [chunks, setChunks] = React.useState([]);
+
+        function start() {
+          setState((s) => ({ ...s, running: true }));
+        }
+        function pause() {
+          setState((s) => ({ ...s, running: false }));
+        }
+        function reset() {
+          setState((s) => ({ ...s, time: 60*60, running: false }));
+        }
+
+        function startRecording() {
+          navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
+            const mediaRecorder = new MediaRecorder(stream);
+            setRecorder(mediaRecorder);
+            setChunks([]);
+            mediaRecorder.ondataavailable = (e) => {
+              if (e.data.size > 0) setChunks((prev) => [...prev, e.data]);
+            };
+            mediaRecorder.onstop = () => {
+              const blob = new Blob(chunks, { type: "audio/webm" });
+              const url = URL.createObjectURL(blob);
+              send({ type: "clue", value: url });
+            };
+            mediaRecorder.start();
+            setRecording(true);
+          });
+        }
+
+        function stopRecording() {
+          if (recorder) {
+            recorder.stop();
+            setRecording(false);
+          }
+        }
+
+        return (
+          <div className="p-6 text-white">
+            <h2 className="text-2xl font-bold mb-4">Control Panel</h2>
+            <div className="text-3xl mb-4">Time: {formatTime(state.time)}</div>
+            <div className="flex gap-2 mb-6">
+              {!state.running ? (
+                <button onClick={start} className="px-4 py-2 bg-green-600 rounded">▶️ Start</button>
+              ) : (
+                <button onClick={pause} className="px-4 py-2 bg-yellow-600 rounded">⏸ Pause</button>
+              )}
+              <button onClick={reset} className="px-4 py-2 bg-red-600 rounded">⏹ Reset</button>
+            </div>
+            <div className="mb-6">
+              {!recording ? (
+                <button onClick={startRecording} className="px-4 py-2 bg-blue-600 rounded">🎙️ Record Clue</button>
+              ) : (
+                <button onClick={stopRecording} className="px-4 py-2 bg-red-600 rounded">⏹ Stop Recording</button>
+              )}
+            </div>
+          </div>
+        );
+      }
+
+      function Display({ state }) {
+        React.useEffect(() => {
+          if (state.lastMessage?.type === "clue") {
+            const audio = new Audio(state.lastMessage.value);
+            audio.play();
+          }
+        }, [state.lastMessage]);
+
+        return (
+          <div className="w-full h-full flex flex-col items-center justify-center bg-black text-white">
+            <h1 className="text-8xl mb-6">{formatTime(state.time)}</h1>
+            {state.lastMessage?.type === "clue" && (
+              <audio controls src={state.lastMessage.value} className="mt-4" />
+            )}
+          </div>
+        );
+      }
+
+      ReactDOM.render(<App />, document.getElementById("root"));
+    </script>
+  </body>
+</html>
