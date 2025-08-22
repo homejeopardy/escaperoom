@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Escape Room Controller</title>
+  <title>Escape Room Control + Display</title>
   <!-- Tailwind CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
   <!-- React + ReactDOM -->
@@ -20,234 +20,177 @@
   <div id="root"></div>
 
   <script type="text/babel">
-    /*************************************************************
-     * Escape Room Control + Display
-     * (All-in-one React app for GitHub Pages, hash routing)
-     *************************************************************/
 
-    const { useState, useEffect, useMemo, useRef } = React;
+    const { useState, useEffect } = React;
 
-    // --- Utilities ---
-    const chName = "escape-room-control";
-    const bc = typeof window !== "undefined" && "BroadcastChannel" in window
-      ? new BroadcastChannel(chName)
-      : null;
-
-    const nowMs = () => Date.now();
-    const pad2 = (n) => n.toString().padStart(2, "0");
-
-    function msToClock(ms) {
-      const total = Math.max(0, Math.floor(ms / 1000));
-      const h = Math.floor(total / 3600);
-      const m = Math.floor((total % 3600) / 60);
-      const s = total % 60;
-      return h > 0 ? `${h}:${pad2(m)}:${pad2(s)}` : `${m}:${pad2(s)}`;
-    }
-
+    // Simple hook for hash-based routing
     function useHashRoute() {
-      const [hash, setHash] = useState(() => window.location.hash || "#/control");
+      const [hash, setHash] = useState(window.location.hash || "#/control");
       useEffect(() => {
         const onHash = () => setHash(window.location.hash || "#/control");
         window.addEventListener("hashchange", onHash);
         return () => window.removeEventListener("hashchange", onHash);
       }, []);
-      return hash.replace(/^#\\/?/, "/");
+      return hash.replace(/^#\/?/, "/"); // ✅ fixed regex
     }
 
     function usePersistentState(key, initial) {
-      const [state, setState] = useState(() => {
+      const [val, setVal] = useState(() => {
         try {
-          const raw = localStorage.getItem(key);
-          return raw ? JSON.parse(raw) : initial;
+          const stored = localStorage.getItem(key);
+          return stored ? JSON.parse(stored) : initial;
         } catch {
           return initial;
         }
       });
       useEffect(() => {
-        try { localStorage.setItem(key, JSON.stringify(state)); } catch {}
-      }, [key, state]);
-      return [state, setState];
+        localStorage.setItem(key, JSON.stringify(val));
+      }, [key, val]);
+      return [val, setVal];
     }
 
-    function send(type, payload) {
-      if (!bc) return;
-      bc.postMessage({ type, payload, at: Date.now() });
-    }
+    // Shared channel
+    const channel = new BroadcastChannel("escape-room");
 
-    // --- Themes ---
-    const THEMES = {
-      dark: {
-        name: "Dark",
-        bg: "bg-black",
-        text: "text-white",
-        accent: "text-slate-300",
-      },
-      neon: {
-        name: "Neon",
-        bg: "bg-zinc-900",
-        text: "text-lime-400",
-        accent: "text-emerald-300",
-      },
-      royal: {
-        name: "Royal",
-        bg: "bg-indigo-950",
-        text: "text-indigo-100",
-        accent: "text-fuchsia-200",
-      },
-    };
-
-    // --- Display ---
-    function Display({ settings }) {
-      const theme = THEMES[settings.theme] || THEMES.dark;
-      const [clock, setClock] = useState(settings.durationMs || 3600000);
+    function Control() {
+      const [duration, setDuration] = usePersistentState("duration", 60);
       const [running, setRunning] = useState(false);
-      const [msg, setMsg] = useState("");
-      const [subtitle, setSubtitle] = useState(settings.subtitle || "");
+      const [remaining, setRemaining] = useState(duration * 60);
+      const [message, setMessage] = useState("");
+      const [subtitle, setSubtitle] = usePersistentState("subtitle", "");
+
+      useEffect(() => {
+        let timer;
+        if (running && remaining > 0) {
+          timer = setInterval(() => setRemaining(r => r - 1), 1000);
+        }
+        return () => clearInterval(timer);
+      }, [running, remaining]);
+
+      useEffect(() => {
+        channel.postMessage({ type: "update", remaining, running, subtitle });
+      }, [remaining, running, subtitle]);
+
+      function start() {
+        setRemaining(duration * 60);
+        setRunning(true);
+      }
+      function pause() { setRunning(false); }
+      function reset() { setRemaining(duration * 60); setRunning(false); }
+
+      function sendMessage() {
+        channel.postMessage({ type: "message", text: message });
+        setMessage("");
+      }
+
+      function blackout() {
+        channel.postMessage({ type: "blackout" });
+      }
+
+      function openDisplay() {
+        const w = window.open("#/display", "_blank");
+        if (w) {
+          w.focus();
+        }
+      }
+
+      return (
+        <div className="p-6 space-y-4">
+          <h1 className="text-2xl font-bold">Escape Room Control</h1>
+          <div className="space-x-2">
+            <label>Duration (minutes):</label>
+            <input
+              type="number"
+              value={duration}
+              onChange={e => setDuration(parseInt(e.target.value))}
+              className="text-black p-1 rounded"
+            />
+          </div>
+          <div className="space-x-2">
+            <button onClick={start} className="bg-green-600 px-3 py-1 rounded">Start</button>
+            <button onClick={pause} className="bg-yellow-600 px-3 py-1 rounded">Pause</button>
+            <button onClick={reset} className="bg-red-600 px-3 py-1 rounded">Reset</button>
+          </div>
+          <div>
+            <label>Subtitle: </label>
+            <input
+              type="text"
+              value={subtitle}
+              onChange={e => setSubtitle(e.target.value)}
+              className="text-black p-1 rounded"
+            />
+          </div>
+          <div className="space-x-2">
+            <input
+              type="text"
+              value={message}
+              onChange={e => setMessage(e.target.value)}
+              placeholder="Clue or announcement"
+              className="text-black p-1 rounded"
+            />
+            <button onClick={sendMessage} className="bg-blue-600 px-3 py-1 rounded">Send</button>
+          </div>
+          <button onClick={blackout} className="bg-gray-800 px-3 py-1 rounded">Blackout</button>
+          <div>
+            <button onClick={openDisplay} className="bg-purple-600 px-3 py-1 rounded">
+              Open Display Window
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    function Display() {
+      const [remaining, setRemaining] = useState(0);
+      const [running, setRunning] = useState(false);
+      const [subtitle, setSubtitle] = useState("");
+      const [message, setMessage] = useState("");
       const [blackout, setBlackout] = useState(false);
-      const [overlayUrl, setOverlayUrl] = useState(settings.overlayUrl || "");
-      const [roomName, setRoomName] = useState(settings.roomName || "Escape Room");
-      const lastTick = useRef(null);
 
       useEffect(() => {
-        if (!bc) return;
-        const onMsg = async (e) => {
-          const { type, payload } = e.data || {};
-          if (type === "display:goFullscreen") {
-            try { await document.documentElement.requestFullscreen(); } catch {}
+        channel.onmessage = (e) => {
+          const { type, ...data } = e.data;
+          if (type === "update") {
+            setRemaining(data.remaining);
+            setRunning(data.running);
+            setSubtitle(data.subtitle);
+          } else if (type === "message") {
+            setMessage(data.text);
+            setTimeout(() => setMessage(""), 10000);
+          } else if (type === "blackout") {
+            setBlackout(b => !b);
           }
         };
-        bc.addEventListener("message", onMsg);
-        return () => bc.removeEventListener("message", onMsg);
       }, []);
 
       useEffect(() => {
-        if (!bc) return;
-        const onMsg = (e) => {
-          const { type, payload } = e.data || {};
-          switch (type) {
-            case "timer:set": setClock(payload.ms); break;
-            case "timer:start": setRunning(true); lastTick.current = nowMs(); break;
-            case "timer:pause": setRunning(false); break;
-            case "timer:reset": setClock(payload.ms); setRunning(false); break;
-            case "display:message": setMsg(payload); break;
-            case "display:subtitle": setSubtitle(payload); break;
-            case "display:blackout": setBlackout(payload); break;
-            case "display:overlay": setOverlayUrl(payload); break;
-            case "display:room": setRoomName(payload); break;
-            default: break;
-          }
-        };
-        bc.addEventListener("message", onMsg);
-        return () => bc.removeEventListener("message", onMsg);
+        if (document.fullscreenElement == null) {
+          document.documentElement.requestFullscreen().catch(() => {});
+        }
       }, []);
 
-      useEffect(() => {
-        if (!running) return;
-        const id = requestAnimationFrame(function tick() {
-          const now = nowMs();
-          const last = lastTick.current ?? now;
-          const delta = now - last;
-          lastTick.current = now;
-          setClock((ms) => Math.max(0, ms - delta));
-          requestAnimationFrame(tick);
-        });
-        return () => cancelAnimationFrame(id);
-      }, [running]);
-
-      const clockText = useMemo(() => msToClock(clock), [clock]);
+      const mins = Math.floor(remaining / 60);
+      const secs = remaining % 60;
+      const timeStr = `${mins}:${secs.toString().padStart(2, "0")}`;
 
       return (
-        <div className={`${theme.bg} ${theme.text} min-h-screen w-full relative`}>
-          {overlayUrl && !blackout && (
-            <div className="absolute inset-0 opacity-20 bg-center bg-cover"
-                 style={{ backgroundImage: `url(${overlayUrl})` }} />
-          )}
-          <div className="relative z-10 flex flex-col items-center justify-center min-h-screen p-8 text-center">
-            <div className="text-sm opacity-70 tracking-widest uppercase">{roomName}</div>
-            <div className="text-[18vw] leading-none font-bold tabular-nums">{clockText}</div>
-            {subtitle && <div className={`mt-2 text-xl md:text-2xl ${theme.accent}`}>{subtitle}</div>}
-            {msg && (
-              <div className="mt-6 max-w-4xl text-2xl md:text-4xl font-semibold">{msg}</div>
-            )}
-          </div>
-          {blackout && <div className="absolute inset-0 bg-black" />}
+        <div className={`w-screen h-screen flex flex-col items-center justify-center ${blackout ? "bg-black" : "bg-gray-900"} text-white`}>
+          <div className="text-8xl font-bold">{timeStr}</div>
+          {subtitle && <div className="text-2xl mt-2">{subtitle}</div>}
+          {message && <div className="text-3xl mt-6 bg-yellow-600 text-black px-4 py-2 rounded">{message}</div>}
         </div>
       );
     }
 
-    // --- Control ---
-    function Control({ settings, setSettings }) {
-      const [durationMin, setDurationMin] = useState(Math.floor((settings.durationMs || 3600000) / 60000));
-      const [customMsg, setCustomMsg] = useState("");
-
-      const applyDuration = (min) => {
-        const ms = Math.max(0, Math.floor(min) * 60000);
-        send("timer:set", { ms });
-      };
-      const start = () => send("timer:start");
-      const pause = () => send("timer:pause");
-      const reset = () => send("timer:reset", { ms: durationMin * 60000 });
-      const pushMsg = () => { send("display:message", customMsg.trim()); setCustomMsg(""); };
-      const openDisplay = () => {
-        const w = window.open(`${location.origin}${location.pathname}#/display`, "display");
-        setTimeout(() => send("display:goFullscreen"), 300);
-      };
-      const setBlackout = (v) => send("display:blackout", v);
-
-      return (
-        <div className="min-h-screen bg-slate-900 text-slate-100 p-6">
-          <div className="max-w-4xl mx-auto">
-            <h1 className="text-2xl font-bold mb-4">Escape Room – Control</h1>
-            <button onClick={openDisplay} className="px-4 py-2 rounded bg-blue-500">Open Display</button>
-            <div className="mt-6">
-              <label className="block mb-2">Duration (minutes)
-                <input type="number" className="text-black ml-2 p-1"
-                  value={durationMin}
-                  onChange={(e)=> setDurationMin(Number(e.target.value))}
-                  onBlur={()=> applyDuration(durationMin)} />
-              </label>
-              <button onClick={start} className="mr-2 px-3 py-1 bg-emerald-500">Start</button>
-              <button onClick={pause} className="mr-2 px-3 py-1 bg-amber-500">Pause</button>
-              <button onClick={reset} className="px-3 py-1 bg-gray-600">Reset</button>
-            </div>
-            <div className="mt-6">
-              <input className="text-black p-1 mr-2"
-                placeholder="Message…" value={customMsg}
-                onChange={(e)=> setCustomMsg(e.target.value)} />
-              <button onClick={pushMsg} className="px-3 py-1 bg-blue-500">Send</button>
-              <button onClick={()=> send("display:message", "")} className="px-3 py-1 bg-gray-600 ml-2">Clear</button>
-            </div>
-            <div className="mt-6">
-              <button onClick={()=> setBlackout(true)} className="px-3 py-1 bg-black">Blackout</button>
-              <button onClick={()=> setBlackout(false)} className="px-3 py-1 bg-gray-600 ml-2">Show</button>
-            </div>
-          </div>
-        </div>
-      );
-    }
-
-    // --- App ---
     function App() {
       const route = useHashRoute();
-      const [settings, setSettings] = usePersistentState("escapeSettings", {
-        theme: "dark",
-        durationMs: 3600000,
-        roomName: "Escape Room",
-        subtitle: "",
-        overlayUrl: "",
-      });
-      return (
-        <div>
-          {route === "/display"
-            ? <Display settings={settings} />
-            : <Control settings={settings} setSettings={setSettings} />}
-        </div>
-      );
+      if (route === "/display") return <Display />;
+      return <Control />;
     }
 
-    // Render
     const root = ReactDOM.createRoot(document.getElementById("root"));
     root.render(<App />);
+
   </script>
 </body>
 </html>
